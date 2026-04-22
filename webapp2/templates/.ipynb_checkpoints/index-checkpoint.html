@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>JobGuard AI — Intelligent Fraud Detection System</title>
+<link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="nav-logo">
+    <div class="nav-logo-icon">JG</div>
+    JobGuard <strong style="color:#6366f1;">AI</strong>
+  </div>
+  <div class="nav-links">
+    <a href="#home">Home</a>
+    <a href="#detector">Detector</a>
+    <a href="#results">Research</a>
+    <a href="#features">Key Findings</a>
+    <a href="#about">About</a>
+  </div>
+  <a href="#detector" class="nav-cta">Try Now →</a>
+</nav>
+
+<!-- ══ HERO ══ -->
+<section class="hero" id="home">
+  <div id="particles"></div>
+  <div class="container">
+    <div class="hero-grid">
+      <div class="hero-left">
+        <div class="hero-eyebrow">
+          <span class="eyebrow-dot"></span>
+          NLP · Machine Learning · Ensemble Methods
+        </div>
+        <h1 class="hero-title">
+          AI-Powered<br/>
+          <span class="line2">Job Fraud Detection</span><br/>
+          at Scale
+        </h1>
+        <p class="hero-desc">
+          An intelligent system combining XGBoost, TF-IDF feature extraction,
+          and adaptive data balancing to detect fraudulent job postings
+          with <strong style="color:#f8fafc;">98.43% accuracy</strong> —
+          protecting job seekers from recruitment scams.
+        </p>
+        <div class="hero-metrics">
+          <div class="metric-pill">
+            <div>
+              <div class="metric-pill-val">98.43%</div>
+              <div class="metric-pill-lbl">Accuracy</div>
+            </div>
+          </div>
+          <div class="metric-pill">
+            <div>
+              <div class="metric-pill-val">17,880</div>
+              <div class="metric-pill-lbl">Training Samples</div>
+            </div>
+          </div>
+          <div class="metric-pill">
+            <div>
+              <div class="metric-pill-val">0.82</div>
+              <div class="metric-pill-lbl">F1-Score</div>
+            </div>
+          </div>
+        </div>
+        <div class="hero-actions">
+          <a href="#detector" class="btn-primary">
+            Analyze a Job Posting →
+          </a>
+          <a href="#results" class="btn-secondary">View Research</a>
+        </div>
+      </div>
+
+      <div class="hero-right">
+        <div class="demo-card">
+          <div class="demo-header">
+            <span class="demo-title">Live Detection Preview</span>
+            <span class="demo-live">
+              <span class="live-dot"></span>ACTIVE
+            </span>
+          </div>
+          <div class="demo-input-area">
+            "Urgent hiring! Earn ₹50,000/month from home.
+            No experience needed. Send ₹500 registration fee
+            to receive your starter kit immediately..."
+          </div>
+          <div class="demo-result-bar">
+            <div class="drb-label">
+              <span>Genuine</span><span>13%</span>
+            </div>
+            <div class="drb-track">
+              <div class="drb-fill-g" style="width:13%"></div>
+            </div>
+          </div>
+          <div class="demo-result-bar">
+            <div class="drb-label">
+              <span>Fraudulent</span><span>87%</span>
+            </div>
+            <div class="drb-track">
+              <div class="drb-fill-f" style="width:87%"></div>
+            </div>
+          </div>
+          <div class="demo-verdict">
+            ⚠ FRAUDULENT DETECTED — 87% confidence
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TECH STRIP - Infinite Scrolling Ticker -->
+<div class="ticker-wrap">
+  <div class="ticker-label">TECH STACK</div>
+  <div class="ticker-track" id="ticker-track"></div>
+</div>
+
+<!-- ══ DETECTOR ══ -->
+<section class="detector-section" id="detector">
+  <div class="container">
+    <div class="section-eyebrow">
+      <span class="eyebrow-chip">AI-Powered Detection</span>
+    </div>
+    <h2 class="section-title">Analyze Any Job Posting</h2>
+    <p class="section-sub">
+      Paste job description text or enter a URL —
+      get instant fraud probability analysis
+    </p>
+
+    <div class="detector-layout">
+
+      <!-- MAIN INPUT -->
+      <div class="detector-main">
+        <div class="tab-bar">
+          <button class="tab-btn active" onclick="switchTab('text',this)">
+            📋 Paste Job Text
+          </button>
+          <button class="tab-btn" onclick="switchTab('url',this)">
+            🌐 From URL
+          </button>
+        </div>
+
+        <!-- TEXT TAB -->
+        <div id="tab-text" class="tab-pane active">
+          <div class="field-label">
+            Job Posting Content
+            <span class="word-counter" id="wc">0 words</span>
+          </div>
+          <textarea id="job-text" class="main-textarea"
+            placeholder="Paste the complete job posting — title, company overview, job description, requirements, salary, location, how to apply..."
+            oninput="onTextInput()"></textarea>
+        </div>
+
+        <!-- URL TAB -->
+        <div id="tab-url" class="tab-pane" style="display:none;">
+          <div class="field-label">Job Posting URL</div>
+          <div class="url-group">
+            <input type="url" id="job-url" class="url-field"
+              placeholder="https://www.naukri.com/job-listings-..."/>
+            <button class="fetch-job-btn" onclick="fetchURL()">
+              Fetch →
+            </button>
+          </div>
+          <div class="url-hint">
+            Works with: <span>Naukri.com · Shine.com · Monster.com</span>
+            (LinkedIn/Indeed require manual copy-paste)
+          </div>
+          <div class="field-label" style="margin-top:16px;">
+            Extracted / Paste Text
+          </div>
+          <textarea id="fetched-text" class="fetched-area"
+            placeholder="Job text will auto-appear here after fetch, or paste manually..."></textarea>
+        </div>
+
+        <button class="analyze-btn" id="analyze-btn" onclick="analyze()">
+          <span id="btn-label">Analyze Job Posting</span>
+          <div class="spinner hidden" id="spinner"></div>
+        </button>
+
+        <!-- RESULT -->
+        <div id="result-box" class="result-box hidden">
+          <div class="result-top">
+            <div class="result-icon-wrap" id="r-icon">✅</div>
+            <div>
+              <div class="result-verdict" id="r-verdict">GENUINE</div>
+              <div class="result-meta"   id="r-meta"></div>
+            </div>
+          </div>
+          <div class="confidence-section">
+            <div class="conf-label">Confidence Scores</div>
+            <div class="conf-row">
+              <span class="conf-name genuine-text">Genuine</span>
+              <div class="conf-bar-track">
+                <div class="conf-bar-fill genuine-bar" id="g-bar"></div>
+              </div>
+              <span class="conf-pct" id="g-pct" style="color:#10b981;"></span>
+            </div>
+            <div class="conf-row">
+              <span class="conf-name fraud-text">Fraudulent</span>
+              <div class="conf-bar-track">
+                <div class="conf-bar-fill fraud-bar" id="f-bar"></div>
+              </div>
+              <span class="conf-pct" id="f-pct" style="color:#ef4444;"></span>
+            </div>
+          </div>
+          <div class="result-warning" id="r-warning"></div>
+        </div>
+      </div>
+
+      <!-- SIDEBAR -->
+      <div class="detector-sidebar">
+
+        <div class="sidebar-card">
+          <div class="sc-title">Model Selection</div>
+          <div class="model-options">
+            <div class="model-opt selected" onclick="selectModel(this,'xgboost')">
+              <span class="mo-name">XGBoost + ADASYN</span>
+              <span class="mo-acc">98.43%</span>
+            </div>
+            <div class="model-opt" onclick="selectModel(this,'rf')">
+              <span class="mo-name">Random Forest + SMOTE</span>
+              <span class="mo-acc">98.35%</span>
+            </div>
+            <div class="model-opt" onclick="selectModel(this,'gb')">
+              <span class="mo-name">Gradient Boosting</span>
+              <span class="mo-acc">96.95%</span>
+            </div>
+            <div class="model-opt" onclick="selectModel(this,'knn')">
+              <span class="mo-name">K-Nearest Neighbors</span>
+              <span class="mo-acc">77.80%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sidebar-card">
+          <div class="sc-title">Analysis History</div>
+          <div class="history-list" id="history-list">
+            <div class="history-empty">No analyses yet</div>
+          </div>
+        </div>
+
+        <div class="sidebar-card">
+          <div class="sc-title">Red Flag Indicators</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="font-size:12px;color:var(--text2);
+                        display:flex;gap:8px;align-items:flex-start;">
+              <span style="color:#ef4444;flex-shrink:0;">●</span>
+              Requests registration fee or upfront payment
+            </div>
+            <div style="font-size:12px;color:var(--text2);
+                        display:flex;gap:8px;align-items:flex-start;">
+              <span style="color:#ef4444;flex-shrink:0;">●</span>
+              Unrealistic salary promises
+            </div>
+            <div style="font-size:12px;color:var(--text2);
+                        display:flex;gap:8px;align-items:flex-start;">
+              <span style="color:#ef4444;flex-shrink:0;">●</span>
+              Asks for personal or bank details upfront
+            </div>
+            <div style="font-size:12px;color:var(--text2);
+                        display:flex;gap:8px;align-items:flex-start;">
+              <span style="color:#ef4444;flex-shrink:0;">●</span>
+              No company address or vague location
+            </div>
+            <div style="font-size:12px;color:var(--text2);
+                        display:flex;gap:8px;align-items:flex-start;">
+              <span style="color:#f59e0b;flex-shrink:0;">●</span>
+              Urgent hiring with no experience needed
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ RESEARCH RESULTS ══ -->
+<section class="results-section" id="results">
+  <div class="container">
+    <div class="section-eyebrow">
+      <span class="eyebrow-chip">Experimental Results</span>
+    </div>
+    <h2 class="section-title">Research Findings</h2>
+    <p class="section-sub">
+      Comparative evaluation of four ML classifiers on EMSCAD dataset
+      with class-balancing techniques
+    </p>
+
+    <div class="results-grid">
+      <div class="rg-card champion">
+        <div class="champion-tag">★ Best Model</div>
+        <div class="rg-model">XGBoost</div>
+        <div class="rg-tech">ADASYN Balancing</div>
+        <div class="rg-metrics">
+          <div class="rm-row">
+            <span class="rm-label">Accuracy</span>
+            <span class="rm-val">98.43%</span>
+          </div>
+          <div class="rm-row">
+            <span class="rm-label">Precision</span>
+            <span class="rm-val">0.91</span>
+          </div>
+          <div class="rm-row">
+            <span class="rm-label">Recall</span>
+            <span class="rm-val">0.75</span>
+          </div>
+          <div class="rm-row">
+            <span class="rm-label">F1-Score</span>
+            <span class="rm-val">0.82</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="rg-card">
+        <div class="rg-model">Random Forest</div>
+        <div class="rg-tech">SMOTE Balancing</div>
+        <div class="rg-metrics">
+          <div class="rm-row"><span class="rm-label">Accuracy</span><span class="rm-val">98.35%</span></div>
+          <div class="rm-row"><span class="rm-label">Precision</span><span class="rm-val">0.99</span></div>
+          <div class="rm-row"><span class="rm-label">Recall</span><span class="rm-val">0.66</span></div>
+          <div class="rm-row"><span class="rm-label">F1-Score</span><span class="rm-val">0.80</span></div>
+        </div>
+      </div>
+
+      <div class="rg-card">
+        <div class="rg-model">Gradient Boosting</div>
+        <div class="rg-tech">SMOTE Balancing</div>
+        <div class="rg-metrics">
+          <div class="rm-row"><span class="rm-label">Accuracy</span><span class="rm-val">96.95%</span></div>
+          <div class="rm-row"><span class="rm-label">Precision</span><span class="rm-val">0.65</span></div>
+          <div class="rm-row"><span class="rm-label">Recall</span><span class="rm-val">0.80</span></div>
+          <div class="rm-row"><span class="rm-label">F1-Score</span><span class="rm-val">0.72</span></div>
+        </div>
+      </div>
+
+      <div class="rg-card">
+        <div class="rg-model">KNN</div>
+        <div class="rg-tech">SMOTE Balancing</div>
+        <div class="rg-metrics">
+          <div class="rm-row"><span class="rm-label">Accuracy</span><span class="rm-val">77.80%</span></div>
+          <div class="rm-row"><span class="rm-label">Precision</span><span class="rm-val">0.18</span></div>
+          <div class="rm-row"><span class="rm-label">Recall</span><span class="rm-val">0.98</span></div>
+          <div class="rm-row"><span class="rm-label">F1-Score</span><span class="rm-val">0.30</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BAR CHART -->
+    <div class="chart-area">
+      <div class="chart-header">
+        <div class="chart-title">Performance Comparison</div>
+        <div class="chart-legend">
+          <div class="legend-item">
+            <div class="legend-dot" style="background:#6366f1;"></div>
+            Accuracy
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background:#06b6d4;"></div>
+            F1-Score × 100
+          </div>
+        </div>
+      </div>
+      <div class="bar-chart" id="bar-chart">
+        <div class="bc-row">
+          <div class="bc-label">XGBoost</div>
+          <div class="bc-bars">
+            <div class="bc-bar bc-acc" id="b-xg-acc"></div>
+            <div class="bc-bar bc-f1"  id="b-xg-f1"></div>
+          </div>
+          <div class="bc-vals">
+            <div class="bc-val">98.43%</div>
+            <div class="bc-val">82%</div>
+          </div>
+        </div>
+        <div class="bc-row">
+          <div class="bc-label">Random Forest</div>
+          <div class="bc-bars">
+            <div class="bc-bar bc-acc" id="b-rf-acc"></div>
+            <div class="bc-bar bc-f1"  id="b-rf-f1"></div>
+          </div>
+          <div class="bc-vals">
+            <div class="bc-val">98.35%</div>
+            <div class="bc-val">80%</div>
+          </div>
+        </div>
+        <div class="bc-row">
+          <div class="bc-label">Gradient Boosting</div>
+          <div class="bc-bars">
+            <div class="bc-bar bc-acc" id="b-gb-acc"></div>
+            <div class="bc-bar bc-f1"  id="b-gb-f1"></div>
+          </div>
+          <div class="bc-vals">
+            <div class="bc-val">96.95%</div>
+            <div class="bc-val">72%</div>
+          </div>
+        </div>
+        <div class="bc-row">
+          <div class="bc-label">KNN</div>
+          <div class="bc-bars">
+            <div class="bc-bar bc-acc" id="b-knn-acc"></div>
+            <div class="bc-bar bc-f1"  id="b-knn-f1"></div>
+          </div>
+          <div class="bc-vals">
+            <div class="bc-val">77.80%</div>
+            <div class="bc-val">30%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ FEATURE IMPORTANCE SECTION ══ -->
+<section class="feature-section" id="features">
+  <div class="container">
+    <div class="section-eyebrow">
+      <span class="eyebrow-chip">Explainable AI</span>
+    </div>
+    <h2 class="section-title">What Makes a Job Fake?</h2>
+    <p class="section-sub">
+      Feature importance analysis reveals which words most strongly
+      influence fraud detection — providing explainability to our model
+    </p>
+
+    <div class="feature-layout">
+
+      <!-- ANIMATED BAR CHART -->
+      <div class="feature-chart-card">
+        <div class="fc-header">
+          <div class="fc-title">Top 15 Most Influential Words</div>
+          <div class="fc-legend">
+            <div class="fcl-item">
+              <div class="fcl-dot" style="background:#ef4444;"></div>
+              Fraud Indicators
+            </div>
+            <div class="fcl-item">
+              <div class="fcl-dot" style="background:#6366f1;"></div>
+              Genuine Indicators
+            </div>
+          </div>
+        </div>
+        <div class="feature-bars" id="feature-bars"></div>
+      </div>
+
+      <!-- INSIGHT CARDS -->
+      <div class="feature-insights">
+
+        <div class="insight-card fraud-insight">
+          <div class="insight-icon">🚨</div>
+          <div class="insight-title">Top Fraud Words</div>
+          <div class="insight-tags">
+            <span class="itag red">data entry</span>
+            <span class="itag red">earn</span>
+            <span class="itag red">needed</span>
+            <span class="itag red">phone</span>
+            <span class="itag red">email</span>
+          </div>
+          <div class="insight-desc">
+            These words appear significantly more in fraudulent postings.
+            "Data entry" jobs are the most common recruitment scam type,
+            often promising unrealistic earnings for minimal work.
+          </div>
+        </div>
+
+        <div class="insight-card genuine-insight">
+          <div class="insight-icon">✅</div>
+          <div class="insight-title">Top Genuine Words</div>
+          <div class="insight-tags">
+            <span class="itag blue">growing</span>
+            <span class="itag blue">duty</span>
+            <span class="itag blue">computer</span>
+            <span class="itag blue">team</span>
+            <span class="itag blue">skill</span>
+          </div>
+          <div class="insight-desc">
+            Legitimate postings focus on professional responsibilities,
+            team collaboration, and specific skill requirements —
+            language that fraudsters rarely use convincingly.
+          </div>
+        </div>
+
+        <div class="insight-card stat-insight">
+          <div class="insight-icon">📊</div>
+          <div class="insight-title">Key Research Finding</div>
+          <div class="insight-desc" style="margin-top:8px;">
+            The phrase <strong style="color:#ef4444;">"data entry"</strong>
+            has the highest importance score of <strong>0.0108</strong> —
+            making it the single strongest predictor of fraud in our model.
+            This aligns with real-world recruitment scam patterns where
+            data entry roles are most commonly fabricated.
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ ABOUT ══ -->
+<section class="about-section" id="about">
+  <div class="container">
+    <div class="about-layout">
+      <div class="about-left">
+        <div class="about-eyebrow section-eyebrow" style="text-align:left;">
+          <span class="eyebrow-chip">Research Publication</span>
+        </div>
+        <h2 class="section-title" style="text-align:left;font-size:36px;">
+          Smart Detection of<br/>Fraudulent Online<br/>Job Postings Using<br/>Machine Learning
+        </h2>
+        <p class="about-desc">
+          This research presents a comprehensive machine learning framework
+          for intelligent detection of fraudulent recruitment advertisements.
+          Using NLP-based feature extraction via TF-IDF, adaptive class
+          balancing through SMOTE and ADASYN, and ensemble learning
+          classifiers, the system achieves state-of-the-art performance
+          on the EMSCAD benchmark dataset.
+        </p>
+
+        <div class="about-stack">
+          <div class="stack-title">Technology Stack</div>
+          <div class="stack-chips">
+            <span class="chip">Python 3.10</span>
+            <span class="chip">XGBoost</span>
+            <span class="chip">Scikit-learn</span>
+            <span class="chip">TF-IDF</span>
+            <span class="chip">SMOTE</span>
+            <span class="chip">ADASYN</span>
+            <span class="chip">NLTK</span>
+            <span class="chip">Flask</span>
+            <span class="chip">EMSCAD Dataset</span>
+            <span class="chip">Pandas</span>
+            <span class="chip">NumPy</span>
+          </div>
+        </div>
+
+        <div class="research-stats">
+          <div class="rs-card">
+            <div class="rs-num">17,880</div>
+            <div class="rs-lbl">Total job postings in dataset</div>
+          </div>
+          <div class="rs-card">
+            <div class="rs-num">866</div>
+            <div class="rs-lbl">Fraudulent postings detected</div>
+          </div>
+          <div class="rs-card">
+            <div class="rs-num">5,000</div>
+            <div class="rs-lbl">TF-IDF features extracted</div>
+          </div>
+          <div class="rs-card">
+            <div class="rs-num">4</div>
+            <div class="rs-lbl">ML classifiers evaluated</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="about-right">
+        <div class="academic-card">
+          <div class="ac-banner">
+            <div class="ac-avatar">YS</div>
+            <div class="ac-name">Ms. Yasmin Rahim Shaikh</div>
+            <div class="ac-role">
+              M.E. Artificial Intelligence · Exam Seat No: 2190
+            </div>
+          </div>
+          <div class="ac-body">
+            <div class="ac-row">
+              <div class="ac-icon">👩‍🏫</div>
+              <div class="ac-info">
+                <div class="ac-info-label">Research Supervisor</div>
+                <div class="ac-info-val">Prof. Ms. Swati S. Hinge</div>
+                <div class="ac-info-sub">
+                  HOD, Department of Artificial Intelligence
+                </div>
+              </div>
+            </div>
+            <div class="ac-row">
+              <div class="ac-icon">🏛️</div>
+              <div class="ac-info">
+                <div class="ac-info-label">Institution</div>
+                <div class="ac-info-val">Sanghavi College of Engineering</div>
+                <div class="ac-info-sub">
+                  Mhasrul, Nashik — 422202, Maharashtra
+                </div>
+              </div>
+            </div>
+            <div class="ac-row">
+              <div class="ac-icon">🎓</div>
+              <div class="ac-info">
+                <div class="ac-info-label">University</div>
+                <div class="ac-info-val">Savitribai Phule Pune University</div>
+                <div class="ac-info-sub">Academic Year 2025–2026</div>
+              </div>
+            </div>
+            <div class="ac-row">
+              <div class="ac-icon">📄</div>
+              <div class="ac-info">
+                <div class="ac-info-label">Dissertation</div>
+                <div class="ac-info-val">Stage II — Final Submission</div>
+                <div class="ac-info-sub">
+                  M.E. Artificial Intelligence Program
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-inner">
+      <div class="footer-brand">JobGuard AI</div>
+      <div class="footer-copy">
+        M.E. Dissertation · Dept. of AI · SCOE Nashik ·
+        Savitribai Phule Pune University · 2025–2026
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="{{ url_for('static',filename='script.js') }}"></script>
+</body>
+</html>

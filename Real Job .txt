@@ -1,0 +1,23 @@
+Software Developer - Python Backend Engineer
+TCS - Tata Consultancy Services, Pune
+Experience: 2-4 years | Salary: 8-12 LPA
+
+Job Description:
+We are looking for a skilled Python developer to join our 
+growing engineering team. You will work on designing and 
+implementing scalable backend services.
+
+Requirements:
+- Strong proficiency in Python and Django/Flask
+- Experience with SQL and NoSQL databases
+- Knowledge of REST API design principles
+- Familiarity with AWS or Azure cloud services
+- Good communication and teamwork skills
+
+What we offer:
+- Competitive salary package
+- Health insurance for family
+- Learning and development programs
+- Flexible work arrangements
+
+Apply through our official careers portal with your updated resume.

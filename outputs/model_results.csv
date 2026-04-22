@@ -1,0 +1,5 @@
+Model,Balancing,Accuracy (%),Precision,Recall,F1-Score
+XGBoost,ADASYN,98.43,0.91,0.75,0.82
+Random Forest,SMOTE,98.35,0.99,0.66,0.8
+Gradient Boosting,SMOTE,96.95,0.65,0.8,0.72
+KNN,SMOTE,77.8,0.18,0.98,0.3
