@@ -86,82 +86,60 @@ def is_job_posting(text):
 
     return True, "OK"
 
-# ── Jina AI Reader (primary fetcher — works on all sites) ─────────────────────
-def fetch_with_jina(url):
+# ── Scrapper API (primary fetcher — works on all sites) ─────────────────────
+def fetch_with_scraperapi(url):
+    """
+    ScraperAPI - handles JS rendering, bypasses blocks.
+    Free: 1000 requests/month. No Chrome needed.
+    """
     try:
-        jina_url = f"https://r.jina.ai/{url}"
-        headers  = {
-            "Accept"    : "text/plain",
-            "User-Agent": "Mozilla/5.0 (compatible; JobGuardAI/1.0)",
-            "X-Return-Format": "text",
+        SCRAPER_API_KEY = os.environ.get('SCRAPER_API_KEY', '')
+        if not SCRAPER_API_KEY:
+            return None, "NO_API_KEY"
+
+        api_url  = "http://api.scraperapi.com"
+        params   = {
+            'api_key': SCRAPER_API_KEY,
+            'url'    : url,
+            'render' : 'true',  # enables JavaScript rendering
         }
-        response = requests.get(jina_url, headers=headers, timeout=30)
+        response = requests.get(api_url, params=params, timeout=60)
 
         if response.status_code != 200:
             return None, f"HTTP {response.status_code}"
 
-        text = response.text.strip()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        for tag in soup(['script','style','nav','footer',
+                         'header','aside','.similar-jobs']):
+            tag.decompose()
 
-        # ── Step 1: Remove Jina metadata header ───────────────────────────────
-        if 'Markdown Content:' in text:
-            text = text.split('Markdown Content:')[-1].strip()
-        elif '---' in text:
-            parts = text.split('---')
-            text  = parts[-1].strip() if len(parts) > 1 else text
+        # Job-specific selectors
+        selectors = [
+            'div.job-desc',
+            'div.dang-inner-html',
+            'div#jobDescriptionText',
+            'div.description__text',
+            'div[class*="job-description"]',
+            'div[class*="description"]',
+            'article', 'main',
+        ]
+        text = ''
+        for sel in selectors:
+            found = soup.select(sel)
+            if found:
+                text = ' '.join(f.get_text(' ', strip=True) for f in found)
+                if len(text) > 100:
+                    break
 
-        # ── Step 2: Remove markdown links [text](url) → just keep text ────────
-        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+        if len(text) < 100:
+            paras = soup.find_all(['p','li'])
+            text  = ' '.join(p.get_text(' ', strip=True) for p in paras)
 
-        # ── Step 3: Remove bare URLs ──────────────────────────────────────────
-        text = re.sub(r'https?://\S+', '', text)
-
-        # ── Step 4: Remove markdown symbols ──────────────────────────────────
-        text = re.sub(r'#{1,6}\s',  '',  text)   # headers
-        text = re.sub(r'\*{2,}',    '',  text)   # bold **
-        text = re.sub(r'\*',        '',  text)   # italic *
-        text = re.sub(r'_{2,}',     '',  text)   # bold __
-        text = re.sub(r'`{1,3}',    '',  text)   # code blocks
-        text = re.sub(r'>\s',       '',  text)   # blockquotes
-        text = re.sub(r'!\[.*?\]',  '',  text)   # images
-        text = re.sub(r'\|',        ' ', text)   # table pipes
-        text = re.sub(r'-{2,}',     '',  text)   # horizontal rules
-        text = re.sub(r'={2,}',     '',  text)   # headers
-
-        # ── Step 5: Remove special characters and noise ───────────────────────
-        text = re.sub(r'\[|\]|\(|\)', '', text)  # leftover brackets
-        text = re.sub(r'\\n',       ' ', text)   # escaped newlines
-        text = re.sub(r'\n{3,}',   '\n', text)   # multiple blank lines
-
-        # ── Step 6: Remove lines that are just URLs or navigation ─────────────
-        lines = text.split('\n')
-        clean_lines = []
-        for line in lines:
-            line = line.strip()
-            # Skip empty, very short, or URL-only lines
-            if len(line) < 4:
-                continue
-            if line.startswith(('http', 'www.', 'Title:', 'URL Source:')):
-                continue
-            if line.count('*') > 3:
-                continue
-            clean_lines.append(line)
-
-        text = ' '.join(clean_lines)
-
-        # ── Step 7: Final whitespace cleanup ──────────────────────────────────
         text = re.sub(r'\s+', ' ', text).strip()
+        return (text[:4000], None) if len(text) > 80 else (None, "EXTRACT_FAILED")
 
-        if len(text) < 80:
-            return None, "EXTRACT_FAILED"
-
-        return text[:4000], None
-
-    except requests.exceptions.Timeout:
-        return None, "TIMEOUT"
-    except requests.exceptions.ConnectionError:
-        return None, "NO_CONNECTION"
     except Exception as e:
-        print(f"Jina fetch error: {e}")
+        print(f"ScraperAPI error: {e}")
         return None, "ERROR"
 # ── Direct requests fallback ──────────────────────────────────────────────────
 def fetch_with_requests(url):
@@ -290,36 +268,36 @@ def fetch_url():
     if not url.startswith('http'):
         return jsonify({'error': 'Please enter a valid URL starting with http'})
 
-    # Strategy 1: Jina AI Reader (best — works on all sites)
-    text, error = fetch_with_jina(url)
+    text, error = None, None
 
-    # Strategy 2: Direct requests fallback
-    if error:
-        print(f"Jina failed ({error}), trying direct requests...")
+    # Strategy 1: ScraperAPI (best quality — handles JS)
+    if os.environ.get('SCRAPER_API_KEY'):
+        print("Trying ScraperAPI...")
+        text, error = fetch_with_scraperapi(url)
+
+    # Strategy 2: Jina AI Reader
+    if not text:
+        print("Trying Jina AI...")
+        text, error = fetch_with_jina(url)
+
+    # Strategy 3: Direct requests
+    if not text:
+        print("Trying direct requests...")
         text, error = fetch_with_requests(url)
 
-    # Handle errors
-    if error == "TIMEOUT":
-        return jsonify({'error': ('Page took too long to load. '
-                                  'Please try again.')})
-    elif error == "NO_CONNECTION":
-        return jsonify({'error': 'Cannot reach this URL. Check the link.'})
-    elif error == "EXTRACT_FAILED":
-        return jsonify({'error': ('Could not extract job description. '
-                                  'Please copy-paste the job text manually.')})
-    elif error:
-        return jsonify({'error': ('Could not fetch this URL. '
-                                  'Please copy-paste the job text manually.')})
+    if not text:
+        return jsonify({
+            'error': ('Could not extract job description. '
+                      'Please copy-paste the job text manually.')
+        })
 
-    # Validate extracted content
     is_valid, reason = is_job_posting(text)
     if not is_valid:
-        return jsonify({'error': ('Fetched content does not look like a job '
-                                  'posting. Please copy-paste the actual '
-                                  'job description text.')})
+        return jsonify({'error': (
+            'Fetched content does not look like a job posting. '
+            'Please copy-paste the actual job description.')})
 
     site = url.split('/')[2] if '/' in url else url
-
     return jsonify({
         'text'      : text,
         'word_count': len(text.split()),
