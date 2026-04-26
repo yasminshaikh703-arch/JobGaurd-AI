@@ -93,6 +93,7 @@ def fetch_with_jina(url):
         headers  = {
             "Accept"    : "text/plain",
             "User-Agent": "Mozilla/5.0 (compatible; JobGuardAI/1.0)",
+            "X-Return-Format": "text",
         }
         response = requests.get(jina_url, headers=headers, timeout=30)
 
@@ -101,18 +102,54 @@ def fetch_with_jina(url):
 
         text = response.text.strip()
 
-        # Strip Jina metadata header lines
-        lines       = text.split('\n')
+        # ── Step 1: Remove Jina metadata header ───────────────────────────────
+        if 'Markdown Content:' in text:
+            text = text.split('Markdown Content:')[-1].strip()
+        elif '---' in text:
+            parts = text.split('---')
+            text  = parts[-1].strip() if len(parts) > 1 else text
+
+        # ── Step 2: Remove markdown links [text](url) → just keep text ────────
+        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+
+        # ── Step 3: Remove bare URLs ──────────────────────────────────────────
+        text = re.sub(r'https?://\S+', '', text)
+
+        # ── Step 4: Remove markdown symbols ──────────────────────────────────
+        text = re.sub(r'#{1,6}\s',  '',  text)   # headers
+        text = re.sub(r'\*{2,}',    '',  text)   # bold **
+        text = re.sub(r'\*',        '',  text)   # italic *
+        text = re.sub(r'_{2,}',     '',  text)   # bold __
+        text = re.sub(r'`{1,3}',    '',  text)   # code blocks
+        text = re.sub(r'>\s',       '',  text)   # blockquotes
+        text = re.sub(r'!\[.*?\]',  '',  text)   # images
+        text = re.sub(r'\|',        ' ', text)   # table pipes
+        text = re.sub(r'-{2,}',     '',  text)   # horizontal rules
+        text = re.sub(r'={2,}',     '',  text)   # headers
+
+        # ── Step 5: Remove special characters and noise ───────────────────────
+        text = re.sub(r'\[|\]|\(|\)', '', text)  # leftover brackets
+        text = re.sub(r'\\n',       ' ', text)   # escaped newlines
+        text = re.sub(r'\n{3,}',   '\n', text)   # multiple blank lines
+
+        # ── Step 6: Remove lines that are just URLs or navigation ─────────────
+        lines = text.split('\n')
         clean_lines = []
         for line in lines:
-            if line.startswith(('Title:', 'URL Source:', 'Markdown Content:', '---')):
+            line = line.strip()
+            # Skip empty, very short, or URL-only lines
+            if len(line) < 4:
+                continue
+            if line.startswith(('http', 'www.', 'Title:', 'URL Source:')):
+                continue
+            if line.count('*') > 3:
                 continue
             clean_lines.append(line)
 
-        text = '\n'.join(clean_lines).strip()
-        text = re.sub(r'\[.*?\]\(.*?\)', '', text)   # remove markdown links
-        text = re.sub(r'#{1,6}\s',        '', text)   # remove markdown headers
-        text = re.sub(r'\s+',             ' ', text).strip()
+        text = ' '.join(clean_lines)
+
+        # ── Step 7: Final whitespace cleanup ──────────────────────────────────
+        text = re.sub(r'\s+', ' ', text).strip()
 
         if len(text) < 80:
             return None, "EXTRACT_FAILED"
@@ -126,7 +163,6 @@ def fetch_with_jina(url):
     except Exception as e:
         print(f"Jina fetch error: {e}")
         return None, "ERROR"
-
 # ── Direct requests fallback ──────────────────────────────────────────────────
 def fetch_with_requests(url):
     try:
