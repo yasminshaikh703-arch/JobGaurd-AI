@@ -18,7 +18,28 @@ function onType() {
   wc.className   = 'wc' + (words >= 20 ? ' ok' : '');
 }
 
-// ── Fetch URL via Selenium backend ──────────────────────────────────────────
+// ── Safe fetch with retry (handles Render free tier cold start) ─────────────
+async function safeFetch(endpoint, body, retries = 2) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fetch(endpoint, {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify(body),
+      });
+      return await res.json();
+    } catch (e) {
+      if (i < retries - 1) {
+        // Wait 8 seconds then retry — server may be waking up
+        await new Promise(r => setTimeout(r, 8000));
+      } else {
+        throw e;
+      }
+    }
+  }
+}
+
+// ── Fetch URL ───────────────────────────────────────────────────────────────
 async function fetchURL() {
   const url  = document.getElementById('job-url').value.trim();
   const note = document.getElementById('fetch-note');
@@ -33,19 +54,14 @@ async function fetchURL() {
 
   btn.textContent  = '⏳';
   btn.disabled     = true;
-  note.textContent = 'Fetching job details — please wait 15–20 seconds...';
+  note.textContent = 'Fetching job details — please wait...';
   note.className   = 'url-note';
   ta.value         = '';
   ta.placeholder   = 'Extracting job description from the page...';
   hideResult();
 
   try {
-    const res  = await fetch('/fetch_url', {
-      method : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body   : JSON.stringify({ url }),
-    });
-    const data = await res.json();
+    const data = await safeFetch('/fetch_url', { url });
 
     if (data.error) {
       note.textContent = '⚠ Could not fetch — ' + data.error +
@@ -61,9 +77,11 @@ async function fetchURL() {
       onType();
     }
   } catch (e) {
-    note.textContent = '⚠ Connection error. Make sure Flask is running.';
-    note.className   = 'url-note warn';
-    ta.placeholder   = 'Paste job text manually...';
+    note.textContent =
+      '⚠ Server is starting up. Please try again in 30 seconds, ' +
+      'or paste the job text manually below.';
+    note.className = 'url-note warn';
+    ta.placeholder = 'Paste job text manually...';
   }
 
   btn.textContent = 'Fetch';
@@ -89,16 +107,14 @@ async function analyze() {
   hideResult();
 
   try {
-    const res  = await fetch('/predict', {
-      method : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body   : JSON.stringify({ text, model }),
-    });
-    const data = await res.json();
+    const data = await safeFetch('/predict', { text, model });
     data.error ? showErr(data.error, '') : showResult(data, text);
   } catch (e) {
-    showErr('Cannot connect to server.',
-      'Make sure Flask is running in Anaconda Prompt.');
+    showErr(
+      'Server is starting up.',
+      'Please wait 30 seconds and try again. ' +
+      'On first visit, the server takes a moment to wake up.'
+    );
   }
 
   btn.disabled    = false;
@@ -163,14 +179,14 @@ function showResult(data, text) {
 // ── Show error ───────────────────────────────────────────────────────────────
 function showErr(msg, hint) {
   const box = document.getElementById('result');
-  box.className     = 'result';
+  box.className         = 'result';
   box.style.borderColor = 'rgba(245,158,11,.28)';
   box.classList.remove('hidden');
   box.innerHTML = `
     <div class="res-top" style="background:rgba(245,158,11,.05);">
       <div class="res-ic" style="background:rgba(245,158,11,.14);">⚠️</div>
       <div>
-        <div class="res-title" style="color:#f59e0b;">Invalid Input</div>
+        <div class="res-title" style="color:#f59e0b;">Notice</div>
         <div class="res-meta">${msg}</div>
       </div>
     </div>
@@ -187,14 +203,17 @@ function hideResult() {
 
 // ── Analysis history ─────────────────────────────────────────────────────────
 function addHistory(text, isF, fp, gp) {
-  history.unshift({ preview: text.substring(0,45).replace(/\n/g,' ') + '...', isF, fp, gp });
+  history.unshift({
+    preview: text.substring(0, 45).replace(/\n/g, ' ') + '...',
+    isF, fp, gp
+  });
   if (history.length > 5) history.pop();
   const el = document.getElementById('history');
   el.innerHTML = history.map(h => `
     <div class="h-item">
       <div class="h-dot ${h.isF ? 'f' : 'g'}"></div>
       <div class="h-text">${h.preview}</div>
-      <div class="h-pct" style="color:${h.isF?'#e5484d':'#00b894'}">
+      <div class="h-pct" style="color:${h.isF ? '#e5484d' : '#00b894'}">
         ${h.isF ? h.fp : h.gp}%
       </div>
     </div>`).join('');
@@ -294,4 +313,17 @@ const maxScore = featData[0].score;
     });
   }, { threshold: 0.25 });
   obs.observe(container);
+})();
+
+// ── Keep server alive (prevents Render free tier sleep) ──────────────────────
+(function keepAlive() {
+  // Ping on page load after 2 seconds to wake server if sleeping
+  setTimeout(async () => {
+    try { await fetch('/ping'); } catch (e) { /* silent */ }
+  }, 2000);
+
+  // Ping every 10 minutes to keep server awake
+  setInterval(async () => {
+    try { await fetch('/ping'); } catch (e) { /* silent */ }
+  }, 10 * 60 * 1000);
 })();
