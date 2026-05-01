@@ -141,6 +141,39 @@ def fetch_with_scraperapi(url):
     except Exception as e:
         print(f"ScraperAPI error: {e}")
         return None, "ERROR"
+# ── Jina AI Reader (free, no key needed) ─────────────────────────────────────
+def fetch_with_jina(url):
+    """
+    Jina AI Reader — free service that converts any URL to clean text.
+    No API key required. Works well on most job portals.
+    """
+    try:
+        jina_url = f"https://r.jina.ai/{url}"
+        headers  = {
+            'Accept'         : 'text/plain',
+            'User-Agent'     : 'Mozilla/5.0 (compatible; JobGuardAI/1.0)',
+        }
+        response = requests.get(jina_url, headers=headers, timeout=30)
+
+        if response.status_code != 200:
+            return None, f"HTTP {response.status_code}"
+
+        text = response.text.strip()
+
+        # Strip Jina metadata header (first few lines)
+        lines = text.split('\n')
+        clean_lines = [l for l in lines if not l.startswith(('Title:', 'URL:', 'Published'))]
+        text = ' '.join(clean_lines)
+        text = re.sub(r'\s+', ' ', text).strip()
+
+        return (text[:4000], None) if len(text) > 80 else (None, "EXTRACT_FAILED")
+
+    except requests.exceptions.Timeout:
+        return None, "TIMEOUT"
+    except Exception as e:
+        print(f"Jina fetch error: {e}")
+        return None, "ERROR"
+
 # ── Direct requests fallback ──────────────────────────────────────────────────
 def fetch_with_requests(url):
     try:
@@ -304,6 +337,11 @@ def fetch_url():
         'char_count': len(text),
         'site'      : site,
     })
+
+# ── Ping (keep-alive for Render free tier) ────────────────────────────────────
+@app.route('/ping')
+def ping():
+    return jsonify({'status': 'alive'})
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
 @app.route('/stats')
