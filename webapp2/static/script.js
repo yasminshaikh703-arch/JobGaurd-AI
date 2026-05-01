@@ -1,4 +1,5 @@
 // ── Config ──────────────────────────────────────────────────────────────────
+
 const CONFIG = {
   sources: [
     { id: 'shine',      base: 'https://jobguard-ai.onrender.com/fetch_url' },
@@ -10,9 +11,9 @@ const CONFIG = {
     normalize: s => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim(),
   },
   fetch: {
-    timeout:  12_000,        // ms per request
-    retries:  2,
-    retryGap: 8_000,         // ms between retries (Render cold start buffer)
+    timeout:  30_000,        // ms per request
+    retries:  3,
+    retryGap: 5_000,         // ms between retries (Render cold start buffer)
   },
 };
 
