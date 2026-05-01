@@ -1,128 +1,327 @@
-// ── State ──────────────────────────────────────────────────────────────────
-let model   = 'xgboost';
-let history = [];
+// ── Config ──────────────────────────────────────────────────────────────────
+const CONFIG = {
+  sources: [
+    { id: 'shine',      base: 'https://jobguard-ai.onrender.com/fetch_url' },
+    { id: 'naukri',     base: 'https://jobguard-ai.onrender.com/fetch_url' },
+    { id: 'linkedin',   base: 'https://jobguard-ai.onrender.com/fetch_url' },
+  ],
+  dedup: {
+    titleThreshold: 0.85,   // Similarity score to consider titles duplicate
+    normalize: s => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim(),
+  },
+  fetch: {
+    timeout:  12_000,        // ms per request
+    retries:  2,
+    retryGap: 8_000,         // ms between retries (Render cold start buffer)
+  },
+};
 
-// ── Model selector ──────────────────────────────────────────────────────────
-function pickModel(el, m) {
-  document.querySelectorAll('.model-item').forEach(x => x.classList.remove('sel'));
-  el.classList.add('sel');
-  model = m;
+// ── Types ───────────────────────────────────────────────────────────────────
+/**
+ * @typedef {Object} JobResult
+ * @property {string}   id          - Dedup fingerprint
+ * @property {string}   source      - Origin source id
+ * @property {string}   url         - Original URL
+ * @property {string}   title       - Job title
+ * @property {string}   text        - Full job text
+ * @property {number}   word_count  - Word count
+ * @property {string}   site        - Human-readable site name
+ * @property {number|null} prediction  - 0=genuine, 1=fraud (null if unanalyzed)
+ * @property {number|null} fraud_pct
+ * @property {number|null} genuine_pct
+ * @property {string}   fetched_at  - ISO timestamp
+ */
+
+// ── Utilities ────────────────────────────────────────────────────────────────
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function fingerprint(title, site) {
+  const norm = CONFIG.dedup.normalize(title + site);
+  let h = 0;
+  for (let i = 0; i < norm.length; i++) {
+    h = Math.imul(31, h) + norm.charCodeAt(i) | 0;
+  }
+  return (h >>> 0).toString(16);
 }
 
-// ── Word counter ────────────────────────────────────────────────────────────
-function onType() {
-  const txt   = document.getElementById('job-text').value;
-  const words = txt.trim() ? txt.trim().split(/\s+/).length : 0;
-  const wc    = document.getElementById('wc');
-  wc.textContent = words + ' words';
-  wc.className   = 'wc' + (words >= 20 ? ' ok' : '');
+function jaccardSim(a, b) {
+  const setA = new Set(a.split(/\s+/));
+  const setB = new Set(b.split(/\s+/));
+  const inter = [...setA].filter(x => setB.has(x)).length;
+  return inter / (setA.size + setB.size - inter);
 }
 
-// ── Safe fetch with retry (handles Render free tier cold start) ─────────────
-async function safeFetch(endpoint, body, retries = 2) {
-  for (let i = 0; i < retries; i++) {
+// ── Core Fetch (single URL, with retry) ─────────────────────────────────────
+async function fetchOne(sourceBase, url, retries = CONFIG.fetch.retries) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CONFIG.fetch.timeout);
+
+  for (let i = 0; i <= retries; i++) {
     try {
-      const res = await fetch(endpoint, {
-        method : 'POST',
+      const res = await fetch(sourceBase, {
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body   : JSON.stringify(body),
+        body:    JSON.stringify({ url }),
+        signal:  controller.signal,
       });
-      return await res.json();
-    } catch (e) {
-      if (i < retries - 1) {
-        // Wait 8 seconds then retry — server may be waking up
-        await new Promise(r => setTimeout(r, 8000));
-      } else {
-        throw e;
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      clearTimeout(timer);
+
+      if (data.error) throw new Error(data.error);
+      return { ok: true, data };
+    } catch (err) {
+      if (i < retries) {
+        await sleep(CONFIG.fetch.retryGap);
+        continue;
       }
+      clearTimeout(timer);
+      return { ok: false, error: err.message };
     }
   }
 }
 
-// ── Fetch URL ───────────────────────────────────────────────────────────────
+// ── Multi-source Aggregator ──────────────────────────────────────────────────
+/**
+ * Fetch a job URL across all configured sources concurrently.
+ * Returns deduplicated, normalised JobResult array.
+ *
+ * @param {string[]} urls
+ * @returns {Promise<{ jobs: JobResult[], errors: Object[] }>}
+ */
+async function aggregateJobs(urls) {
+  // Build tasks: every (url × source) pair
+  const tasks = urls.flatMap(url =>
+    CONFIG.sources.map(src => ({ url, src }))
+  );
+
+  // Fan out all requests concurrently
+  const settled = await Promise.allSettled(
+    tasks.map(({ url, src }) => fetchOne(src.base, url).then(r => ({ ...r, url, src })))
+  );
+
+  const errors = [];
+  const rawJobs = [];
+
+  for (const res of settled) {
+    if (res.status === 'rejected') {
+      errors.push({ reason: res.reason?.message ?? 'unknown' });
+      continue;
+    }
+    const { ok, data, error, url, src } = res.value;
+    if (!ok) {
+      errors.push({ source: src.id, url, error });
+      continue;
+    }
+
+    rawJobs.push({
+      id:          fingerprint(data.text?.slice(0, 80) ?? url, src.id),
+      source:      src.id,
+      url,
+      title:       data.title ?? url,
+      text:        data.text  ?? '',
+      word_count:  data.word_count ?? 0,
+      site:        data.site  ?? src.id,
+      prediction:  null,
+      fraud_pct:   null,
+      genuine_pct: null,
+      fetched_at:  new Date().toISOString(),
+    });
+  }
+
+  return {
+    jobs:   deduplicate(rawJobs),
+    errors,
+  };
+}
+
+// ── Deduplication ────────────────────────────────────────────────────────────
+function deduplicate(jobs) {
+  const seen   = new Map();   // id → job (exact dedup)
+  const titles = [];          // [{ norm, job }] (fuzzy dedup)
+
+  for (const job of jobs) {
+    // Exact fingerprint match
+    if (seen.has(job.id)) continue;
+
+    // Fuzzy title match across already-accepted jobs
+    const norm = CONFIG.dedup.normalize(job.title);
+    const isDup = titles.some(({ t }) =>
+      jaccardSim(norm, t) >= CONFIG.dedup.titleThreshold
+    );
+    if (isDup) continue;
+
+    seen.set(job.id, job);
+    titles.push({ t: norm, job });
+  }
+
+  return [...seen.values()];
+}
+
+// ── Analyze (predict fraud) ──────────────────────────────────────────────────
+async function analyzeJobs(jobs, model = 'xgboost') {
+  const results = await Promise.allSettled(
+    jobs.map(job =>
+      fetch('/predict', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ text: job.text, model }),
+      })
+      .then(r => r.json())
+      .then(d => ({ ...job, ...d }))
+    )
+  );
+
+  return results.map((r, i) =>
+    r.status === 'fulfilled'
+      ? r.value
+      : { ...jobs[i], error: r.reason?.message }
+  );
+}
+
+// ── Clean API Response Builder ────────────────────────────────────────────────
+/**
+ * Fetch, deduplicate, and optionally analyze a list of URLs.
+ *
+ * @param {string[]} urls
+ * @param {{ model?: string, analyze?: boolean }} opts
+ * @returns {Promise<Object>}
+ */
+async function processJobs(urls, { model = 'xgboost', analyze = false } = {}) {
+  if (!Array.isArray(urls) || !urls.length) {
+    return apiResponse([], [], { message: 'No URLs provided' });
+  }
+
+  const { jobs, errors } = await aggregateJobs(urls);
+  const analyzed = analyze && jobs.length ? await analyzeJobs(jobs, model) : jobs;
+
+  return apiResponse(analyzed, errors);
+}
+
+function apiResponse(jobs, errors = [], meta = {}) {
+  return {
+    success:    errors.length === 0 || jobs.length > 0,
+    count:      jobs.length,
+    jobs:       jobs.map(sanitize),
+    errors,
+    meta: {
+      sources:    CONFIG.sources.map(s => s.id),
+      dedup_algo: 'fingerprint + jaccard',
+      threshold:  CONFIG.dedup.titleThreshold,
+      timestamp:  new Date().toISOString(),
+      ...meta,
+    },
+  };
+}
+
+function sanitize(job) {
+  return {
+    id:          job.id,
+    source:      job.source,
+    url:         job.url,
+    title:       job.title,
+    word_count:  job.word_count,
+    site:        job.site,
+    prediction:  job.prediction,
+    fraud_pct:   job.fraud_pct,
+    genuine_pct: job.genuine_pct,
+    fetched_at:  job.fetched_at,
+    error:       job.error ?? null,
+  };
+}
+
+// ── Keep-alive (Render free tier) ─────────────────────────────────────────────
+(function keepAlive() {
+  setTimeout(() => fetch('/ping').catch(() => {}), 2_000);
+  setInterval(() => fetch('/ping').catch(() => {}), 10 * 60 * 1_000);
+})();
+
+// ── State & Model Selector ───────────────────────────────────────────────────
+let activeModel = 'xgboost';
+
+function pickModel(el, m) {
+  document.querySelectorAll('.model-item').forEach(x => x.classList.remove('sel'));
+  el.classList.add('sel');
+  activeModel = m;
+}
+
+// ── Word Counter ─────────────────────────────────────────────────────────────
+function onType() {
+  const txt   = document.getElementById('job-text').value;
+  const words = txt.trim() ? txt.trim().split(/\s+/).length : 0;
+  const wc    = document.getElementById('wc');
+  wc.textContent = `${words} words`;
+  wc.className   = `wc${words >= 20 ? ' ok' : ''}`;
+}
+
+// ── UI: Fetch & Analyze ───────────────────────────────────────────────────────
 async function fetchURL() {
   const url  = document.getElementById('job-url').value.trim();
   const note = document.getElementById('fetch-note');
   const btn  = document.getElementById('fetch-btn');
   const ta   = document.getElementById('job-text');
 
-  if (!url) { alert('Please enter a URL'); return; }
-  if (!url.startsWith('http')) {
-    alert('Please enter a valid URL starting with http');
-    return;
+  if (!url || !url.startsWith('http')) {
+    return alert('Please enter a valid URL starting with http');
   }
 
-  btn.textContent  = '⏳';
-  btn.disabled     = true;
+  btn.textContent = '⏳'; btn.disabled = true;
   note.textContent = 'Fetching job details — please wait...';
-  note.className   = 'url-note';
-  ta.value         = '';
-  ta.placeholder   = 'Extracting job description from the page...';
+  note.className = 'url-note';
+  ta.value = ''; ta.placeholder = 'Extracting job description...';
   hideResult();
 
-  try {
-    const data = await safeFetch('/fetch_url', { url });
+  const { jobs, errors } = await aggregateJobs([url]);
 
-    if (data.error) {
-      note.textContent = '⚠ Could not fetch — ' + data.error +
-        ' Please copy-paste the job text below manually.';
-      note.className   = 'url-note warn';
-      ta.placeholder   = 'Paste the job description here manually...';
-    } else {
-      ta.value         = data.text;
-      ta.placeholder   = '';
-      note.textContent = '✅ Fetched successfully — ' + data.word_count +
-        ' words from ' + data.site + '. Click Analyze below.';
-      note.className   = 'url-note ok';
-      onType();
-    }
-  } catch (e) {
-    note.textContent =
-      '⚠ Server is starting up. Please try again in 30 seconds, ' +
-      'or paste the job text manually below.';
+  if (jobs.length) {
+    const job = jobs[0];
+    ta.value = job.text; ta.placeholder = '';
+    note.textContent = `✅ Fetched — ${job.word_count} words from ${job.site}. Click Analyze below.`;
+    note.className = 'url-note ok';
+    onType();
+  } else {
+    note.textContent = `⚠ Could not fetch — ${errors[0]?.error ?? 'unknown error'}. Paste text manually.`;
     note.className = 'url-note warn';
     ta.placeholder = 'Paste job text manually...';
   }
 
-  btn.textContent = 'Fetch';
-  btn.disabled    = false;
+  btn.textContent = 'Fetch'; btn.disabled = false;
 }
 
-// ── Analyze ─────────────────────────────────────────────────────────────────
 async function analyze() {
   const text = document.getElementById('job-text').value.trim();
-
   if (!text || text.split(/\s+/).length < 15) {
-    showErr('Please enter more text.',
+    return showErr('Please enter more text.',
       'Paste the complete job posting including title, description, and requirements.');
-    return;
   }
 
-  const btn    = document.getElementById('analyze-btn');
-  const lbl    = document.getElementById('btn-label');
-  const spin   = document.getElementById('spin');
-  btn.disabled = true;
-  lbl.textContent = 'Analyzing...';
+  const btn  = document.getElementById('analyze-btn');
+  const lbl  = document.getElementById('btn-label');
+  const spin = document.getElementById('spin');
+  btn.disabled = true; lbl.textContent = 'Analyzing...';
   spin.classList.remove('hidden');
   hideResult();
 
-  try {
-    const data = await safeFetch('/predict', { text, model });
-    data.error ? showErr(data.error, '') : showResult(data, text);
-  } catch (e) {
-    showErr(
-      'Server is starting up.',
-      'Please wait 30 seconds and try again. ' +
-      'On first visit, the server takes a moment to wake up.'
-    );
+  const result = await processJobs(
+    [document.getElementById('job-url').value.trim() || 'manual'],
+    { model: activeModel, analyze: true }
+  ).catch(() => null);
+
+  if (!result || !result.jobs.length) {
+    showErr('Server is starting up.', 'Please wait 30 seconds and try again.');
+  } else {
+    const job = result.jobs[0];
+    job.error ? showErr(job.error, '') : showResult({ ...job, text_length: text.split(/\s+/).length }, text);
   }
 
-  btn.disabled    = false;
-  lbl.textContent = 'Analyze Job Posting';
+  btn.disabled = false; lbl.textContent = 'Analyze Job Posting';
   spin.classList.add('hidden');
 }
 
-// ── Show result ──────────────────────────────────────────────────────────────
+// ── UI: Result / Error / History ─────────────────────────────────────────────
+const analysisHistory = [];
+
 function showResult(data, text) {
   const isF = data.prediction === 1;
   const box = document.getElementById('result');
@@ -131,12 +330,8 @@ function showResult(data, text) {
     <div class="res-top">
       <div class="res-ic">${isF ? '⚠️' : '✅'}</div>
       <div>
-        <div class="res-title">
-          ${isF ? 'FRAUDULENT JOB POSTING' : 'GENUINE JOB POSTING'}
-        </div>
-        <div class="res-meta">
-          ${data.text_length} words · XGBoost + TF-IDF · EMSCAD Model
-        </div>
+        <div class="res-title">${isF ? 'FRAUDULENT JOB POSTING' : 'GENUINE JOB POSTING'}</div>
+        <div class="res-meta">${data.text_length} words · ${activeModel.toUpperCase()} · EMSCAD Model</div>
       </div>
     </div>
     <div class="res-bars">
@@ -154,33 +349,27 @@ function showResult(data, text) {
     </div>
     <div class="res-tip">
       ${isF
-        ? '<strong>⚠ Warning:</strong> This posting shows strong fraud indicators. Do NOT share Aadhaar, bank details, or pay any registration fee. Report this posting to the platform immediately.'
-        : '<strong>✅ Looks Legitimate:</strong> This posting appears genuine. Always independently verify the company through official channels before sharing personal information.'}
+        ? '<strong>⚠ Warning:</strong> Do NOT share Aadhaar, bank details, or pay any fee. Report this posting immediately.'
+        : '<strong>✅ Looks Legitimate:</strong> Always verify the company through official channels before sharing personal info.'}
     </div>`;
 
-  box.className = 'result ' + (isF ? 'fraudulent' : 'genuine');
+  box.className = `result ${isF ? 'fraudulent' : 'genuine'}`;
   box.classList.remove('hidden');
 
   setTimeout(() => {
-    const rg = document.getElementById('rb-g');
-    const rf = document.getElementById('rb-f');
-    const gp = document.getElementById('rb-gp');
-    const fp = document.getElementById('rb-fp');
-    if (rg) rg.style.width = data.genuine_pct + '%';
-    if (rf) rf.style.width = data.fraud_pct   + '%';
-    if (gp) gp.textContent = data.genuine_pct + '%';
-    if (fp) fp.textContent = data.fraud_pct   + '%';
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.style.width = val + '%'; };
+    const txt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val + '%'; };
+    set('rb-g', data.genuine_pct); txt('rb-gp', data.genuine_pct);
+    set('rb-f', data.fraud_pct);   txt('rb-fp', data.fraud_pct);
   }, 80);
 
   box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   addHistory(text, isF, data.fraud_pct, data.genuine_pct);
 }
 
-// ── Show error ───────────────────────────────────────────────────────────────
 function showErr(msg, hint) {
   const box = document.getElementById('result');
-  box.className         = 'result';
-  box.style.borderColor = 'rgba(245,158,11,.28)';
+  box.className = 'result'; box.style.borderColor = 'rgba(245,158,11,.28)';
   box.classList.remove('hidden');
   box.innerHTML = `
     <div class="res-top" style="background:rgba(245,158,11,.05);">
@@ -190,9 +379,7 @@ function showErr(msg, hint) {
         <div class="res-meta">${msg}</div>
       </div>
     </div>
-    ${hint ? `<div class="res-tip" style="margin:0 20px 18px;
-      background:rgba(245,158,11,.05);border-color:rgba(245,158,11,.18);
-      color:#fbbf24;">${hint}</div>` : ''}`;
+    ${hint ? `<div class="res-tip" style="margin:0 20px 18px;background:rgba(245,158,11,.05);border-color:rgba(245,158,11,.18);color:#fbbf24;">${hint}</div>` : ''}`;
   box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -201,21 +388,14 @@ function hideResult() {
   if (b) { b.classList.add('hidden'); b.style.borderColor = ''; }
 }
 
-// ── Analysis history ─────────────────────────────────────────────────────────
 function addHistory(text, isF, fp, gp) {
-  history.unshift({
-    preview: text.substring(0, 45).replace(/\n/g, ' ') + '...',
-    isF, fp, gp
-  });
-  if (history.length > 5) history.pop();
-  const el = document.getElementById('history');
-  el.innerHTML = history.map(h => `
+  analysisHistory.unshift({ preview: text.substring(0, 45).replace(/\n/g, ' ') + '...', isF, fp, gp });
+  if (analysisHistory.length > 5) analysisHistory.pop();
+  document.getElementById('history').innerHTML = analysisHistory.map(h => `
     <div class="h-item">
       <div class="h-dot ${h.isF ? 'f' : 'g'}"></div>
       <div class="h-text">${h.preview}</div>
-      <div class="h-pct" style="color:${h.isF ? '#e5484d' : '#00b894'}">
-        ${h.isF ? h.fp : h.gp}%
-      </div>
+      <div class="h-pct" style="color:${h.isF ? '#e5484d' : '#00b894'}">${h.isF ? h.fp : h.gp}%</div>
     </div>`).join('');
 }
 
@@ -247,9 +427,11 @@ const tickerItems = [
   ).join('');
 })();
 
-// ── Performance chart ─────────────────────────────────────────────────────────
+// ── Performance Chart ─────────────────────────────────────────────────────────
 (function animateChart() {
-  const obs = new IntersectionObserver(entries => {
+  const chart = document.getElementById('perf-chart');
+  if (!chart) return;
+  new IntersectionObserver((entries, obs) => {
     entries.forEach(e => {
       if (!e.isIntersecting) return;
       document.querySelectorAll('.prow').forEach(row => {
@@ -259,9 +441,7 @@ const tickerItems = [
       });
       obs.disconnect();
     });
-  }, { threshold: 0.3 });
-  const chart = document.getElementById('perf-chart');
-  if (chart) obs.observe(chart);
+  }, { threshold: 0.3 }).observe(chart);
 })();
 
 // ── Feature Importance Bars ───────────────────────────────────────────────────
@@ -282,20 +462,18 @@ const featData = [
   { word:'entry',      score:0.0043, type:'fr' },
   { word:'service',    score:0.0043, type:'ge' },
 ];
-const maxScore = featData[0].score;
 
 (function buildFeatureBars() {
   const container = document.getElementById('feat-bars');
   if (!container) return;
-
+  const max = featData[0].score;
   container.innerHTML = featData.map(f => {
-    const pct = ((f.score / maxScore) * 100).toFixed(1);
+    const pct = ((f.score / max) * 100).toFixed(1);
     return `
       <div class="fb-row">
         <div class="fb-word">${f.word}</div>
         <div class="fb-track">
-          <div class="fb-fill ${f.type}"
-               data-w="${pct}" style="width:0%;">
+          <div class="fb-fill ${f.type}" data-w="${pct}" style="width:0%;">
             ${f.type === 'fr' ? '⚠' : ''}
           </div>
         </div>
@@ -303,7 +481,7 @@ const maxScore = featData[0].score;
       </div>`;
   }).join('');
 
-  const obs = new IntersectionObserver(entries => {
+  new IntersectionObserver((entries, obs) => {
     entries.forEach(e => {
       if (!e.isIntersecting) return;
       container.querySelectorAll('.fb-fill').forEach(bar => {
@@ -311,19 +489,5 @@ const maxScore = featData[0].score;
       });
       obs.disconnect();
     });
-  }, { threshold: 0.25 });
-  obs.observe(container);
-})();
-
-// ── Keep server alive (prevents Render free tier sleep) ──────────────────────
-(function keepAlive() {
-  // Ping on page load after 2 seconds to wake server if sleeping
-  setTimeout(async () => {
-    try { await fetch('/ping'); } catch (e) { /* silent */ }
-  }, 2000);
-
-  // Ping every 10 minutes to keep server awake
-  setInterval(async () => {
-    try { await fetch('/ping'); } catch (e) { /* silent */ }
-  }, 10 * 60 * 1000);
+  }, { threshold: 0.25 }).observe(container);
 })();
